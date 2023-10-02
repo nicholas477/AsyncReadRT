@@ -28,8 +28,6 @@ void UAsyncReadRTAction::Activate()
 	X = FMath::Clamp(X, 0, RT->SizeX - 1);
 	Y = FMath::Clamp(Y, 0, RT->SizeY - 1);
 
-	FIntRect SampleRect(X, Y, X + 1, Y + 1);
-
 	FReadSurfaceDataFlags ReadSurfaceDataFlags = bNormalize ? FReadSurfaceDataFlags() : FReadSurfaceDataFlags(RCM_MinMax);
 
 
@@ -41,23 +39,18 @@ void UAsyncReadRTAction::Activate()
 
 		FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncRTReadback"));
 
-		//FRDGBuilder GraphBuilder(RHICmdList);
-		//FRDGTextureRef Texture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(TextureRHI, TEXT("AsyncCopyRTSource")));
-		//GraphBuilder.Execute();
-
-		//FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
-
 		SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT", FColor::Magenta);
+
 		FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
-		FTexture2DRHIRef IORHITextureCPU = RHICreateTexture2D(TextureRHI->GetSizeX(), TextureRHI->GetSizeY(), TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
+		FTexture2DRHIRef IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
 
 		{
 			SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::CopyTexture", FColor::Magenta);
 			FRHICopyTextureInfo CopyTextureInfo;
-			CopyTextureInfo.Size = FIntVector(TextureRHI->GetSizeXYZ());
+			CopyTextureInfo.Size = FIntVector(1,1,1);
 			CopyTextureInfo.SourceMipIndex = 0;
 			CopyTextureInfo.DestMipIndex = 0;
-			CopyTextureInfo.SourcePosition = FIntVector(0, 0, 0);
+			CopyTextureInfo.SourcePosition = FIntVector(X, Y, 0);
 			CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
 
 			RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::Unknown, ERHIAccess::CopyDest));
@@ -68,31 +61,43 @@ void UAsyncReadRTAction::Activate()
 		}
 		RHICmdList.WriteGPUFence(Fence);
 
-		//GDynamicRHI->RHISubmitCommandsAndFlushGPU();
-		//GDynamicRHI->RHIBlockUntilGPUIdle();
-
-		TArray<FFloat16Color> OutputArray;
-		OutputArray.AddDefaulted(32);
+		FLinearColor PixelColor;
 
 		{
 			SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::MapTexture", FColor::Magenta);
 			void* OutputBuffer = NULL;
 			int32 Width; int32 Height;
 			GDynamicRHI->RHIMapStagingSurface(IORHITextureCPU, Fence, OutputBuffer, Width, Height, RHICmdList.GetGPUMask().ToIndex());
-			//RHICmdList.MapStagingSurface(IORHITextureCPU, Fence, OutputBuffer, Width, Height);
 			{
-				FMemory::Memcpy(OutputArray.GetData(), OutputBuffer, 32 * sizeof(decltype(OutputArray)::ElementType));
+				switch (TextureRHI->GetFormat())
+				{
+				case EPixelFormat::PF_FloatRGBA:
+				{
+					FFloat16Color OutputColor;
+					FMemory::Memcpy(&OutputColor, OutputBuffer, sizeof(OutputColor));
+					PixelColor.R = OutputColor.R;
+					PixelColor.G = OutputColor.G;
+					PixelColor.B = OutputColor.B;
+					PixelColor.A = OutputColor.A;
+					break;
+				}
+				case EPixelFormat::PF_B8G8R8A8:
+				{
+					FColor OutputColor;
+					FMemory::Memcpy(&OutputColor, OutputBuffer, sizeof(OutputColor));
+					PixelColor.R = OutputColor.R;
+					PixelColor.G = OutputColor.G;
+					PixelColor.B = OutputColor.B;
+					PixelColor.A = OutputColor.A;
+					PixelColor /= 255.f;
+					break;
+				}
+				default:
+					UE_LOG(LogTemp, Warning, TEXT("UAsyncReadRTAction: Unsupported RT format! Format: %d"), static_cast<int32>(TextureRHI->GetFormat())); // Unsupported, add a new switch statement.
+				}
 			}
 			RHICmdList.UnmapStagingSurface(IORHITextureCPU);
 		}
-
-		//RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThreadFlushResourcesFlushDeferredDeletes);
-
-		FColor PixelColor;
-		PixelColor.R = OutputArray[0].R;
-		PixelColor.G = OutputArray[0].G;
-		PixelColor.B = OutputArray[0].B;
-		PixelColor.A = OutputArray[0].A;
 
 		AsyncTask(ENamedThreads::GameThread, [PixelColor, AsyncReadPtr]()
 			{
