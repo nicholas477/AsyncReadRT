@@ -10,6 +10,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAsyncReadRTOutputPin, FLinearColor,
 
 class UTextureRenderTarget2D;
 
+struct FAsyncReadRTData
+{
+	FGPUFenceRHIRef TextureFence;
+	FTexture2DRHIRef Texture;
+};
+
 /**
  * 
  */
@@ -19,7 +25,7 @@ class ASYNCREADRT_API UAsyncReadRTAction : public UBlueprintAsyncActionBase
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"), Category = "Rendering")
-		static UAsyncReadRTAction* AsyncReadRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* TextureRenderTarget, int32 X, int32 Y, bool bNormalize);
+		static UAsyncReadRTAction* AsyncReadRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* TextureRenderTarget, int32 X, int32 Y, bool bFlushRHI);
 
 	// UBlueprintAsyncActionBase interface
 	virtual void Activate() override;
@@ -33,8 +39,17 @@ public:
 
 	int32 X;
 	int32 Y;
-	bool bNormalize;
+	bool bFlushRHI;
+	bool bFinished = false;
 
 	UPROPERTY(BlueprintAssignable)
 		FAsyncReadRTOutputPin OnReadRenderTarget;
+
+	TSharedPtr<FAsyncReadRTData> ReadRTData;
+
+protected:
+	UFUNCTION()
+		void OnNextFrame();
+
+	uint32 StartFrame;
 };
