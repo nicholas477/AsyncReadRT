@@ -14,6 +14,8 @@ struct FAsyncReadRTData
 {
 	FGPUFenceRHIRef TextureFence;
 	FTexture2DRHIRef Texture;
+	TAtomic<bool> FinishedRead;
+	FLinearColor PixelColor;
 };
 
 /**
@@ -40,16 +42,15 @@ public:
 	int32 X;
 	int32 Y;
 	bool bFlushRHI;
-	bool bFinished = false;
 
 	UPROPERTY(BlueprintAssignable)
 		FAsyncReadRTOutputPin OnReadRenderTarget;
 
-	TSharedPtr<FAsyncReadRTData> ReadRTData;
+	TSharedPtr<FAsyncReadRTData, ESPMode::ThreadSafe> ReadRTData;
 
 protected:
 	UFUNCTION()
 		void OnNextFrame();
 
-	uint32 StartFrame;
+	uint64 StartFrame;
 };

@@ -17,6 +17,8 @@ UAsyncReadRTAction* UAsyncReadRTAction::AsyncReadRenderTarget(UObject* WorldCont
 	BlueprintNode->X = X;
 	BlueprintNode->Y = Y;
 	BlueprintNode->bFlushRHI = bFlushRHI;
+	BlueprintNode->ReadRTData = MakeShared<FAsyncReadRTData, ESPMode::ThreadSafe>();
+	BlueprintNode->ReadRTData->FinishedRead = false;
 	return BlueprintNode;
 }
 
@@ -50,7 +52,9 @@ static void ReadPixel(int32 Width, int32 Height, void* Data, EPixelFormat Format
 
 // Maps the texture and reads a single pixel.
 // If bFlushRHI is false, then it checks the render fence. If the render fence hasn't completed, then the function early exits
-static void PollRTRead(FRHICommandListImmediate& RHICmdList, FGPUFenceRHIRef Fence, FTexture2DRHIRef Texture, TWeakObjectPtr<UAsyncReadRTAction> ReadAction, bool bFlushRHI)
+static void PollRTRead(FRHICommandListImmediate& RHICmdList, 
+	TSharedPtr<FAsyncReadRTData, ESPMode::ThreadSafe> ReadData,
+	TWeakObjectPtr<UAsyncReadRTAction> ReadAction, bool bFlushRHI)
 {
 	SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::PollRTRead", FColor::Magenta);
 
@@ -60,41 +64,30 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList, FGPUFenceRHIRef Fen
 	if (!bFlushRHI)
 	{
 		// Return if we haven't finished the texture commands
-		if (!Fence.IsValid() || !Fence->Poll())
+		if (!ReadData->TextureFence.IsValid() || !ReadData->TextureFence->Poll())
 		{
 			return;
 		}
 	}
 
-	FLinearColor PixelColor;
-	{
-		SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::MapTexture", FColor::Magenta);
-		void* OutputBuffer = NULL;
-		int32 Width; int32 Height;
+	SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::MapTexture", FColor::Magenta);
+	void* OutputBuffer = NULL;
+	int32 Width; int32 Height;
 
-		if (bFlushRHI)
-		{
-			RHICmdList.MapStagingSurface(Texture, Fence, OutputBuffer, Width, Height);
-		}
-		else
-		{
-			GDynamicRHI->RHIMapStagingSurface(Texture, Fence, OutputBuffer, Width, Height, RHICmdList.GetGPUMask().ToIndex());
-		}
-		{
-			ReadPixel(Width, Height, OutputBuffer, Texture->GetFormat(), PixelColor);
-		}
-		RHICmdList.UnmapStagingSurface(Texture);
+	if (bFlushRHI)
+	{
+		// This flushes the command list
+		RHICmdList.MapStagingSurface(ReadData->Texture, ReadData->TextureFence, OutputBuffer, Width, Height);
 	}
-
-	AsyncTask(ENamedThreads::GameThread, [PixelColor, ReadAction]()
+	else
 	{
-		if (ReadAction.IsValid() && !ReadAction->bFinished)
-		{
-			ReadAction->bFinished = true;
-			ReadAction->OnReadRenderTarget.Broadcast(PixelColor);
-			ReadAction->SetReadyToDestroy();
-		}
-	});
+		GDynamicRHI->RHIMapStagingSurface(ReadData->Texture, ReadData->TextureFence, OutputBuffer, Width, Height, RHICmdList.GetGPUMask().ToIndex());
+	}
+	{
+		ReadPixel(Width, Height, OutputBuffer, ReadData->Texture->GetFormat(), ReadData->PixelColor);
+	}
+	RHICmdList.UnmapStagingSurface(ReadData->Texture);
+	ReadData->FinishedRead = true;
 }
 
 void UAsyncReadRTAction::Activate()
@@ -106,9 +99,9 @@ void UAsyncReadRTAction::Activate()
 	X = FMath::Clamp(X, 0, RT->SizeX - 1);
 	Y = FMath::Clamp(Y, 0, RT->SizeY - 1);
 
-	StartFrame = GFrameNumber;
+	StartFrame = GFrameCounter;
 
-	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([=, AsyncReadPtr = TWeakObjectPtr<UAsyncReadRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture()](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([=, AsyncReadPtr = TWeakObjectPtr<UAsyncReadRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
 	{
 		check(IsInRenderingThread());
 		check(TextureRHI.IsValid());
@@ -138,44 +131,38 @@ void UAsyncReadRTAction::Activate()
 		RHICmdList.WriteGPUFence(Fence);
 		check(Fence.IsValid());
 
+		ReadData->Texture = IORHITextureCPU;
+		ReadData->TextureFence = Fence;
+
 		// If we flush the RHI then we can just go ahead and read the mapped texture asap
 		if (bFlushRHI)
 		{
-			PollRTRead(RHICmdList, Fence, IORHITextureCPU, AsyncReadPtr, bFlushRHI);
-		}
-		else
-		{
-			// Otherwise, push the data back to the game thread and wait for the next frame
-			AsyncTask(ENamedThreads::GameThread, [=]()
-			{
-				if (AsyncReadPtr.IsValid())
-				{
-					AsyncReadPtr->ReadRTData = MakeShared<FAsyncReadRTData>();
-					AsyncReadPtr->ReadRTData->Texture = IORHITextureCPU;
-					AsyncReadPtr->ReadRTData->TextureFence = Fence;
-				}
-			});
+			PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
 		}
 	});
 
-	if (!bFlushRHI)
-	{
-		WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncReadRTAction::OnNextFrame);
-	}
+	WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncReadRTAction::OnNextFrame);
 }
 
 void UAsyncReadRTAction::OnNextFrame()
 {
-	const int32 FramesWaited = GFrameNumber - StartFrame;
+	//const int32 FramesWaited = GFrameCounter - StartFrame;
 	//UE_LOG(LogTemp, Warning, TEXT("Frames waited: %d"), FramesWaited);
 
-	ENQUEUE_RENDER_COMMAND(FReadRTAsync)([WeakThis = TWeakObjectPtr<UAsyncReadRTAction>(this), ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
-	{
-		PollRTRead(RHICmdList, ReadRTData->TextureFence, ReadRTData->Texture, WeakThis, false);
-	});
+	check(ReadRTData.IsValid());
 
-	if (!bFinished)
+	if (ReadRTData->FinishedRead)
 	{
+		OnReadRenderTarget.Broadcast(ReadRTData->PixelColor);
+		SetReadyToDestroy();
+	}
+	else
+	{
+		ENQUEUE_RENDER_COMMAND(FReadRTAsync)([WeakThis = TWeakObjectPtr<UAsyncReadRTAction>(this), ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+		{
+			PollRTRead(RHICmdList, ReadRTData, WeakThis, false);
+		});
+
 		WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncReadRTAction::OnNextFrame);
 	}
 }
