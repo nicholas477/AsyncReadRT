@@ -56,7 +56,7 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList,
 	TSharedPtr<FAsyncReadRTData, ESPMode::ThreadSafe> ReadData,
 	TWeakObjectPtr<UAsyncReadRTAction> ReadAction, bool bFlushRHI)
 {
-	SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::PollRTRead", FColor::Magenta);
+	SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT::PollRTRead", FColor::Magenta);
 
 	check(IsInRenderingThread());
 
@@ -70,7 +70,7 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList,
 		}
 	}
 
-	SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::MapTexture", FColor::Magenta);
+	SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT::MapTexture", FColor::Magenta);
 	void* OutputBuffer = NULL;
 	int32 Width; int32 Height;
 
@@ -108,27 +108,28 @@ void UAsyncReadRTAction::Activate()
 
 		FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncRTReadback"));
 
-		SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT", FColor::Magenta);
+		SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT", FColor::Magenta);
 
-		FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
-		FTexture2DRHIRef IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
-
+		FTexture2DRHIRef IORHITextureCPU;
 		{
-			SCOPED_NAMED_EVENT_TEXT("UAsyncReadRTAction::AsyncReadRT::CopyTexture", FColor::Magenta);
+			SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
+
+			FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
+			IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
+
 			FRHICopyTextureInfo CopyTextureInfo;
-			CopyTextureInfo.Size = FIntVector(1,1,1);
+			CopyTextureInfo.Size = FIntVector(1, 1, 1);
 			CopyTextureInfo.SourceMipIndex = 0;
 			CopyTextureInfo.DestMipIndex = 0;
 			CopyTextureInfo.SourcePosition = FIntVector(X, Y, 0);
 			CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
 
-			RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::Unknown, ERHIAccess::CopyDest));
 			RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
 			RHICmdList.CopyTexture(TextureRHI, IORHITextureCPU, CopyTextureInfo);
 
 			RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
+			RHICmdList.WriteGPUFence(Fence);
 		}
-		RHICmdList.WriteGPUFence(Fence);
 		check(Fence.IsValid());
 
 		ReadData->Texture = IORHITextureCPU;
