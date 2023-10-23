@@ -9,6 +9,10 @@
 #include "RenderGraphBuilder.h"
 #include "Async/Async.h"
 #include "CoreGlobals.h"
+#include "TextureResource.h"
+#include "Runtime/Launch/Resources/Version.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 UAsyncReadRTAction* UAsyncReadRTAction::AsyncReadRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* TextureRenderTarget, int32 X, int32 Y, bool bFlushRHI)
 {
