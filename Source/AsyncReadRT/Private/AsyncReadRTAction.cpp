@@ -4,6 +4,7 @@
 #include "AsyncReadRTAction.h"
 
 #include "AsyncReadRT.h"
+#include "RHICommandList.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "RenderGraphBuilder.h"
 #include "Async/Async.h"
@@ -101,7 +102,7 @@ void UAsyncReadRTAction::Activate()
 
 	StartFrame = GFrameCounter;
 
-	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([=, AsyncReadPtr = TWeakObjectPtr<UAsyncReadRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, X = X, Y = Y, AsyncReadPtr = TWeakObjectPtr<UAsyncReadRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
 	{
 		check(IsInRenderingThread());
 		check(TextureRHI.IsValid());
@@ -114,8 +115,15 @@ void UAsyncReadRTAction::Activate()
 		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
 
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 2
+			FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncRTReadback"), 1, 1, TextureRHI->GetFormat());
+			TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
+			TextureDesc.InitialState = ERHIAccess::CopyDest;
+			IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
+#else
 			FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
 			IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
+#endif
 
 			FRHICopyTextureInfo CopyTextureInfo;
 			CopyTextureInfo.Size = FIntVector(1, 1, 1);
