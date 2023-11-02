@@ -56,7 +56,7 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList,
 	}
 	else
 	{
-		GDynamicRHI->RHIMapStagingSurface(ReadData->Texture, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height, RHICmdList.GetGPUMask().ToIndex());
+		GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
 	}
 
 	const int32 Width = ReadData->Texture->GetSizeX();
