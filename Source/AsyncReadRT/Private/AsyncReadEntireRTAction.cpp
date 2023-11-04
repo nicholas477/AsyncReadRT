@@ -56,7 +56,11 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList,
 	}
 	else
 	{
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 2
+		GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, INDEX_NONE, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
+#else
 		GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
+#endif
 	}
 
 	const int32 Width = ReadData->Texture->GetSizeX();
