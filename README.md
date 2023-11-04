@@ -4,6 +4,3 @@ This plugin adds a async blueprint node `Async Read Render Target` that reads a 
 ![BP Node](Resources/bp_node.PNG?raw=true")
 
 The node takes about 3 frames to return the result of the pixel color.
-
-# Notes
-This plugin is built again version 4.27+. It will probably work with UE5 but I haven't tested it.
