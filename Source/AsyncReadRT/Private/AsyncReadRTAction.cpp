@@ -99,7 +99,11 @@ void UAsyncReadRTAction::Activate()
 			FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncRTReadback"), 1, 1, TextureRHI->GetFormat());
 			TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
 			TextureDesc.InitialState = ERHIAccess::CopyDest;
+#if ENGINE_MINOR_VERSION > 3
+			IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
+#else // ENGINE_MINOR_VERSION
 			IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
+#endif // ENGINE_MINOR_VERSION
 #else
 			FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
 			IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);

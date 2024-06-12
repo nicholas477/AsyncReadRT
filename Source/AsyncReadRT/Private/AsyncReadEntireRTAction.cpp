@@ -34,6 +34,7 @@ static void PollRTRead(FRHICommandListImmediate& RHICmdList,
 	SCOPED_NAMED_EVENT_TEXT("AsyncReadEntireRTAction::AsyncReadRT::PollRTRead", FColor::Magenta);
 
 	check(IsInRenderingThread());
+	ReadData->FinishedRead = false;
 
 	// If we didn't flush the RHI then make sure the previous rendering commands got done
 	if (!bFlushRHI)
@@ -136,7 +137,11 @@ void UAsyncReadEntireRTAction::Activate()
 				FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncEntireRTReadback"), Width, Height, TextureRHI->GetFormat());
 				TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
 				TextureDesc.InitialState = ERHIAccess::CopyDest;
+#if ENGINE_MINOR_VERSION > 3
+				IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
+#else // ENGINE_MINOR_VERSION
 				IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
+#endif // ENGINE_MINOR_VERSION
 #else
 				FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
 				IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
@@ -175,6 +180,7 @@ void UAsyncReadEntireRTAction::OnNextFrame()
 	//const int32 FramesWaited = GFrameCounter - StartFrame;
 	//UE_LOG(LogTemp, Warning, TEXT("Frames waited: %d"), FramesWaited);
 
+	check(IsInGameThread());
 	check(ReadRTData.IsValid());
 
 	if (ReadRTData->FinishedRead)
