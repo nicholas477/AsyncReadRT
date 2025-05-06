@@ -118,59 +118,63 @@ void UAsyncReadEntireRTAction::Activate()
 	StartFrame = GFrameCounter;
 
 	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, AsyncReadPtr = TWeakObjectPtr<UAsyncReadEntireRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+	{
+		check(IsInRenderingThread());
+		check(TextureRHI.IsValid());
+
+		FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncEntireRTReadback"));
+
+		SCOPED_NAMED_EVENT_TEXT("AsyncReadEntireRTAction::AsyncReadRT", FColor::Magenta);
+
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+		FTextureRHIRef IORHITextureCPU;
+#else
+		FTexture2DRHIRef IORHITextureCPU;
+#endif
 		{
-			check(IsInRenderingThread());
-			check(TextureRHI.IsValid());
+			SCOPED_NAMED_EVENT_TEXT("AsyncReadEntireRTAction::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
 
-			FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncEntireRTReadback"));
-
-			SCOPED_NAMED_EVENT_TEXT("AsyncReadEntireRTAction::AsyncReadRT", FColor::Magenta);
-
-			FTexture2DRHIRef IORHITextureCPU;
-			{
-				SCOPED_NAMED_EVENT_TEXT("AsyncReadEntireRTAction::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
-
-				int32 Width, Height;
-				Width = TextureRHI->GetSizeX();
-				Height = TextureRHI->GetSizeY();
+			int32 Width, Height;
+			Width = TextureRHI->GetSizeX();
+			Height = TextureRHI->GetSizeY();
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 2
-				FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncEntireRTReadback"), Width, Height, TextureRHI->GetFormat());
-				TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
-				TextureDesc.InitialState = ERHIAccess::CopyDest;
+			FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncEntireRTReadback"), Width, Height, TextureRHI->GetFormat());
+			TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
+			TextureDesc.InitialState = ERHIAccess::CopyDest;
 #if ENGINE_MINOR_VERSION > 3
-				IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
+			IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
 #else // ENGINE_MINOR_VERSION
-				IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
+			IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
 #endif // ENGINE_MINOR_VERSION
 #else
-				FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
-				IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
+			FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
+			IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
 #endif
 
-				FRHICopyTextureInfo CopyTextureInfo;
-				CopyTextureInfo.Size = FIntVector(Width, Height, 1);
-				CopyTextureInfo.SourceMipIndex = 0;
-				CopyTextureInfo.DestMipIndex = 0;
-				CopyTextureInfo.SourcePosition = FIntVector(0, 0, 0);
-				CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
+			FRHICopyTextureInfo CopyTextureInfo;
+			CopyTextureInfo.Size = FIntVector(Width, Height, 1);
+			CopyTextureInfo.SourceMipIndex = 0;
+			CopyTextureInfo.DestMipIndex = 0;
+			CopyTextureInfo.SourcePosition = FIntVector(0, 0, 0);
+			CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
 
-				RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
-				RHICmdList.CopyTexture(TextureRHI, IORHITextureCPU, CopyTextureInfo);
+			RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
+			RHICmdList.CopyTexture(TextureRHI, IORHITextureCPU, CopyTextureInfo);
 
-				RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
-				RHICmdList.WriteGPUFence(Fence);
-			}
-			check(Fence.IsValid());
+			RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
+			RHICmdList.WriteGPUFence(Fence);
+		}
+		check(Fence.IsValid());
 
-			ReadData->Texture = IORHITextureCPU;
-			ReadData->TextureFence = Fence;
+		ReadData->Texture = IORHITextureCPU;
+		ReadData->TextureFence = Fence;
 
-			// If we flush the RHI then we can just go ahead and read the mapped texture asap
-			if (bFlushRHI)
-			{
-				PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
-			}
-		});
+		// If we flush the RHI then we can just go ahead and read the mapped texture asap
+		if (bFlushRHI)
+		{
+			PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
+		}
+	});
 
 	WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncReadEntireRTAction::OnNextFrame);
 }

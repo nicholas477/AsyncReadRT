@@ -91,7 +91,11 @@ void UAsyncReadRTAction::Activate()
 
 		SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT", FColor::Magenta);
 
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+		FTextureRHIRef IORHITextureCPU;
+#else
 		FTexture2DRHIRef IORHITextureCPU;
+#endif
 		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncReadRTAction::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
 
