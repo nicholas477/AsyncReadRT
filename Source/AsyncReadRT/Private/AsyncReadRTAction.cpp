@@ -77,9 +77,6 @@ void UAsyncReadRTAction::Activate()
 	check(TextureResource);
 	check(TextureResource->GetRenderTargetTexture());
 
-	X = FMath::Clamp(X, 0, RT->SizeX - 1);
-	Y = FMath::Clamp(Y, 0, RT->SizeY - 1);
-
 	StartFrame = GFrameCounter;
 
 	ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, X = X, Y = Y, AsyncReadPtr = TWeakObjectPtr<UAsyncReadRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
@@ -113,11 +110,14 @@ void UAsyncReadRTAction::Activate()
 			IORHITextureCPU = RHICreateTexture2D(1, 1, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
 #endif
 
+			const int32 SrcX = FMath::Clamp(X, 0, static_cast<int32>(TextureRHI->GetSizeX()) - 1);
+			const int32 SrcY = FMath::Clamp(Y, 0, static_cast<int32>(TextureRHI->GetSizeY()) - 1);
+
 			FRHICopyTextureInfo CopyTextureInfo;
 			CopyTextureInfo.Size = FIntVector(1, 1, 1);
 			CopyTextureInfo.SourceMipIndex = 0;
 			CopyTextureInfo.DestMipIndex = 0;
-			CopyTextureInfo.SourcePosition = FIntVector(X, Y, 0);
+			CopyTextureInfo.SourcePosition = FIntVector(SrcX, SrcY, 0);
 			CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
 
 			RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
