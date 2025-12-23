@@ -141,7 +141,9 @@ void UAsyncReadEntireRTAction::Activate()
 			FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncEntireRTReadback"), Width, Height, TextureRHI->GetFormat());
 			TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
 			TextureDesc.InitialState = ERHIAccess::CopyDest;
-#if ENGINE_MINOR_VERSION > 3
+#if ENGINE_MINOR_VERSION >= 5
+			IORHITextureCPU = RHICreateTexture(TextureDesc);
+#elif ENGINE_MINOR_VERSION == 4
 			IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
 #else // ENGINE_MINOR_VERSION
 			IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
